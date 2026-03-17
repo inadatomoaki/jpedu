@@ -50,16 +50,12 @@ function extractImageUrl(item: {
   content?: string;
   contentEncoded?: string;
 }): string | null {
-  // enclosure
   if (item.enclosure?.url && item.enclosure.type?.startsWith('image/')) {
     return item.enclosure.url;
   }
-  // media:content
   const mc = Array.isArray(item.mediaContent) ? item.mediaContent[0] : item.mediaContent;
   if (mc?.$?.url) return mc.$.url;
-  // media:thumbnail
   if (item.mediaThumbnail?.$?.url) return item.mediaThumbnail.$.url;
-  // <img> in HTML description/content
   const html = item.description || item.content || item.contentEncoded || '';
   const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
   if (match) return match[1];
@@ -71,14 +67,13 @@ function isRssFeed(url: string): boolean {
 }
 
 export async function fetchAllFeeds(): Promise<void> {
-  const sources = getRssSources();
+  const sources = await getRssSources();
   const rssOnly = sources.filter((s) => isRssFeed(s.url));
   console.log(`[RSS] Fetching ${rssOnly.length} RSS feeds...`);
 
   for (const source of rssOnly) {
     try {
       console.log(`[RSS] Fetching: ${source.name} (${source.url})`);
-      // fetch()でHTMLを取得してからparseString()で解析（URL文字コード問題を回避）
       const res = await fetch(source.url, {
         headers: {
           'User-Agent': 'JPEduPortal/1.0 (Japanese Language Education News Aggregator)',
@@ -105,7 +100,7 @@ export async function fetchAllFeeds(): Promise<void> {
         if (!isRelevantArticle(title, source.name)) continue;
         const image_url = extractImageUrl(item);
         try {
-          upsertArticle({
+          await upsertArticle({
             guid: makeGuid(source.url, item),
             title,
             link: item.link || source.url,
@@ -121,21 +116,18 @@ export async function fetchAllFeeds(): Promise<void> {
         }
       }
 
-      updateSourceFetchedAt(source.id);
+      await updateSourceFetchedAt(source.id);
       console.log(`[RSS] ${source.name}: ${insertedCount} articles processed`);
     } catch (err) {
-      // Log per-source errors but continue with other sources
       console.error(`[RSS] Error fetching ${source.name} (${source.url}):`, err instanceof Error ? err.message : err);
     }
   }
 
   console.log('[RSS] Done fetching RSS feeds');
 
-  // スクレイピングソースを取得
   await fetchAllScrapedSources();
 
   console.log('[RSS] All sources done');
 
-  // OG画像をバックグラウンドで取得（未取得記事を最大30件）
   fetchOgImagesInBackground(30);
 }

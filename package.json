@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.0",
     "@types/cheerio": "^1.0.0",
     "better-sqlite3": "^9.6.0",
     "cheerio": "^1.2.0",

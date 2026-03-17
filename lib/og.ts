@@ -1,4 +1,4 @@
-import { getDb } from './db';
+import { getArticlesWithoutImages, updateArticleImageUrl } from './db';
 
 // GoogleのCDN・ドメインから配信される画像は記事画像ではないためスキップ
 const SKIP_IMAGE_DOMAINS = ['lh3.googleusercontent.com', 'news.google.com', 'google.com'];
@@ -41,26 +41,19 @@ async function fetchOgImageUrl(articleUrl: string): Promise<string | null> {
 }
 
 // リフレッシュ後にバックグラウンドでOG画像を取得・キャッシュする
-// image_url が NULL の記事を対象に batchSize 件取得する
 export function fetchOgImagesInBackground(batchSize = 30): void {
-  const db = getDb();
-  const articles = db.prepare(
-    'SELECT id, link FROM articles WHERE image_url IS NULL ORDER BY published_at DESC LIMIT ?'
-  ).all(batchSize) as { id: number; link: string }[];
-
-  if (articles.length === 0) return;
-  console.log(`[OG] Fetching OG images for ${articles.length} articles (background)...`);
-
   const CONCURRENCY = 5;
   (async () => {
+    const articles = await getArticlesWithoutImages(batchSize);
+    if (articles.length === 0) return;
+    console.log(`[OG] Fetching OG images for ${articles.length} articles (background)...`);
+
     for (let i = 0; i < articles.length; i += CONCURRENCY) {
       const batch = articles.slice(i, i + CONCURRENCY);
       await Promise.all(
         batch.map(async (article) => {
           const imageUrl = await fetchOgImageUrl(article.link);
-          // 空文字列を「試したが画像なし」のセンチネルとして保存し、再取得を防ぐ
-          db.prepare('UPDATE articles SET image_url = ? WHERE id = ?')
-            .run(imageUrl ?? '', article.id);
+          await updateArticleImageUrl(article.id, imageUrl ?? '');
         })
       );
     }

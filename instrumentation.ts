@@ -1,6 +1,6 @@
 export async function register() {
-  // Only run on server side (Node.js runtime)
-  if (process.env.NEXT_RUNTIME === 'nodejs') {
+  // Only run on server side (Node.js runtime), skip on Vercel (serverless)
+  if (process.env.NEXT_RUNTIME === 'nodejs' && !process.env.VERCEL) {
     const { fetchAllFeeds } = await import('./lib/rss');
     const cron = await import('node-cron');
 

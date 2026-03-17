@@ -31,14 +31,11 @@ async function fetchHtml(url: string): Promise<string> {
   }
 }
 
-// 日本語日付文字列を YYYY-MM-DD に変換
 function parseDate(s: string): string | null {
   if (!s) return null;
   s = s.trim();
-  // "2025年6月14日" or "2025年6月14日（土）"
   const jp = s.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/);
   if (jp) return `${jp[1]}-${jp[2].padStart(2, '0')}-${jp[3].padStart(2, '0')}`;
-  // "2025/6/14" "2025-6-14" "2025.6.14"
   const slash = s.match(/(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
   if (slash) return `${slash[1]}-${slash[2].padStart(2, '0')}-${slash[3].padStart(2, '0')}`;
   return null;
@@ -53,9 +50,8 @@ function inferEventType(title: string): string {
   return 'その他';
 }
 
-// 今月から6か月以内かチェック
 function isWithin6Months(dateStr: string | null): boolean {
-  if (!dateStr) return true; // 日付不明は保存する
+  if (!dateStr) return true;
   const date = new Date(dateStr);
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -63,17 +59,12 @@ function isWithin6Months(dateStr: string | null): boolean {
   return date >= start && date <= end;
 }
 
-// -----------------------------------------------------------------------
-// 1. 日本語教育学会 (NKG)
-// https://www.nkg.or.jp/event/
-// -----------------------------------------------------------------------
 async function scrapeNkg(): Promise<ScrapedEvent[]> {
   const BASE = 'https://www.nkg.or.jp';
   const html = await fetchHtml(`${BASE}/event/`);
   const $ = cheerio.load(html);
   const events: ScrapedEvent[] = [];
 
-  // イベントリンク: href="/event/.../..."
   $('a[href*="/event/"]').each((_, el) => {
     const href = $(el).attr('href') || '';
     if (!href.match(/\/event\/.+/)) return;
@@ -85,12 +76,10 @@ async function scrapeNkg(): Promise<ScrapedEvent[]> {
     const url = href.startsWith('http') ? href : `${BASE}${href}`;
     const fullText = $el.text();
 
-    // 日付抽出
     const dateMatch = fullText.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/g);
     const eventDate = dateMatch ? parseDate(dateMatch[0]) : null;
     const eventDateEnd = dateMatch && dateMatch.length > 1 ? parseDate(dateMatch[dateMatch.length - 1]) : null;
 
-    // 会場: 「会場：」「場所：」の後ろ
     const venueMatch = fullText.match(/(?:会場|場所)[：:]\s*([^\n\r　]+)/);
     const venue = venueMatch ? venueMatch[1].trim() : null;
 
@@ -111,10 +100,6 @@ async function scrapeNkg(): Promise<ScrapedEvent[]> {
   return events;
 }
 
-// -----------------------------------------------------------------------
-// 2. 9640.jp 学会情報
-// https://www.9640.jp/topics/gakkai/
-// -----------------------------------------------------------------------
 async function scrape9640(): Promise<ScrapedEvent[]> {
   const BASE = 'https://www.9640.jp';
   const html = await fetchHtml(`${BASE}/topics/gakkai/`);
@@ -130,18 +115,15 @@ async function scrape9640(): Promise<ScrapedEvent[]> {
     const href = anchor.attr('href') || '';
     const url = href.startsWith('http') ? href : `${BASE}${href}`;
 
-    // 日付: <strong>タグ
     const dateText = $el.find('strong').first().text().trim();
     const eventDate = parseDate(dateText);
 
-    // 日付範囲があれば終了日も
     const dateRangeMatch = dateText.match(/(\d{4}[\/\.\-]\d{1,2}[\/\.\-]\d{1,2})\s*[〜~]\s*(\d{4}[\/\.\-]\d{1,2}[\/\.\-]\d{1,2})/);
     let eventDateEnd: string | null = null;
     if (dateRangeMatch) {
       eventDateEnd = parseDate(dateRangeMatch[2]);
     }
 
-    // 会場: アンカーの後ろのテキスト
     const fullText = $el.text();
     const venueMatch = fullText.replace(dateText, '').replace(title, '').trim();
     const venue = venueMatch.length > 2 && venueMatch.length < 50 ? venueMatch : null;
@@ -163,10 +145,6 @@ async function scrape9640(): Promise<ScrapedEvent[]> {
   return events;
 }
 
-// -----------------------------------------------------------------------
-// 3. 凡人社イベント
-// https://www.bonjinsha.com/event
-// -----------------------------------------------------------------------
 async function scrapeBonjinsha(): Promise<ScrapedEvent[]> {
   const BASE = 'https://www.bonjinsha.com';
   const html = await fetchHtml(`${BASE}/event`);
@@ -184,13 +162,11 @@ async function scrapeBonjinsha(): Promise<ScrapedEvent[]> {
 
     const fullText = $el.text();
 
-    // "開催予定 2026/03.15" or "2026/3/15" style
     const dateMatch = fullText.match(/(\d{4})[\/\.](\d{1,2})[\/\.\-](\d{1,2})/);
     const eventDate = dateMatch
       ? `${dateMatch[1]}-${dateMatch[2].padStart(2, '0')}-${dateMatch[3].padStart(2, '0')}`
       : null;
 
-    // オンライン or 会場名
     const onlineMatch = /オンライン/.test(fullText);
     const venueMatch = fullText.match(/(?:会場|場所)[：:]\s*([^\n\r　]+)/);
     const venue = venueMatch ? venueMatch[1].trim() : onlineMatch ? 'オンライン' : null;
@@ -212,24 +188,18 @@ async function scrapeBonjinsha(): Promise<ScrapedEvent[]> {
   return events;
 }
 
-// -----------------------------------------------------------------------
-// 4. UALS Google Calendar (iCal)
-// -----------------------------------------------------------------------
 function unfoldIcal(ical: string): string {
   return ical.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '');
 }
 
 function parseIcalDate(value: string): string | null {
-  // YYYYMMDD
   const dateOnly = value.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (dateOnly) return `${dateOnly[1]}-${dateOnly[2]}-${dateOnly[3]}`;
-  // YYYYMMDDTHHMMSS[Z]
   const dateTime = value.match(/^(\d{4})(\d{2})(\d{2})T/);
   if (dateTime) return `${dateTime[1]}-${dateTime[2]}-${dateTime[3]}`;
   return null;
 }
 
-// iCalのDTEND（全日イベント）は翌日なので1日引く
 function adjustIcalEndDate(dateStr: string | null): string | null {
   if (!dateStr) return null;
   const d = new Date(dateStr + 'T00:00:00');
@@ -272,11 +242,9 @@ async function scrapeUalsCalendar(): Promise<ScrapedEvent[]> {
 
     const eventDate = dtstart ? parseIcalDate(dtstart) : null;
     const rawEnd = dtend ? parseIcalDate(dtend) : null;
-    // 全日イベントのDTENDは翌日なので調整
     const isAllDay = dtstart?.length === 8 || dtstart?.includes('VALUE=DATE');
     const eventDateEnd = isAllDay ? adjustIcalEndDate(rawEnd) : rawEnd;
 
-    // DESCRIPTION内のURL抽出
     const descUrl = description?.match(/https?:\/\/[^\s\\]+/)?.[0] || null;
 
     events.push({
@@ -296,20 +264,14 @@ async function scrapeUalsCalendar(): Promise<ScrapedEvent[]> {
   return events;
 }
 
-// -----------------------------------------------------------------------
-// 5. JACTFL
-// https://www.jactfl.or.jp/?page_id=126
-// -----------------------------------------------------------------------
 async function scrapeJactfl(): Promise<ScrapedEvent[]> {
   const BASE = 'https://www.jactfl.or.jp';
   const html = await fetchHtml(`${BASE}/?page_id=126`);
   const $ = cheerio.load(html);
   const events: ScrapedEvent[] = [];
 
-  // WordPressスタイルのリスト
   $('li').each((_, el) => {
     const $el = $(el);
-    // タイトルリンク: ?p= を含むもの（カテゴリリンク?cat=は除く）
     const anchor = $el.find('a[href*="?p="], a[href*="/archives/"]').first();
     const title = anchor.text().trim();
     if (!title || title.length < 4) return;
@@ -317,7 +279,6 @@ async function scrapeJactfl(): Promise<ScrapedEvent[]> {
     const href = anchor.attr('href') || '';
     const url = href.startsWith('http') ? href : `${BASE}${href}`;
 
-    // 日付: テキストノードから抽出
     const fullText = $el.text();
     const dateMatch = fullText.match(/(\d{4})[\.\/\-](\d{1,2})[\.\/\-](\d{1,2})/);
     const eventDate = dateMatch
@@ -341,11 +302,6 @@ async function scrapeJactfl(): Promise<ScrapedEvent[]> {
   return events;
 }
 
-// -----------------------------------------------------------------------
-// 6. 国立国語研究所 (NINJAL)
-// https://www.ninjal.ac.jp/news/2025/
-// https://www.ninjal.ac.jp/news/2026/
-// -----------------------------------------------------------------------
 async function scrapeNinjal(): Promise<ScrapedEvent[]> {
   const BASE = 'https://www.ninjal.ac.jp';
   const thisYear = new Date().getFullYear();
@@ -360,12 +316,10 @@ async function scrapeNinjal(): Promise<ScrapedEvent[]> {
     }
     const $ = cheerio.load(html);
 
-    // 各ニュース項目を走査
     $('li, .news-item, article, tr').each((_, el) => {
       const $el = $(el);
       const fullText = $el.text();
 
-      // 「催し物」カテゴリを優先するが、他のイベント記述も拾う
       const isEvent = /催し物|大会|シンポジウム|講演|ワークショップ|フォーラム/.test(fullText);
       if (!isEvent) return;
 
@@ -377,11 +331,9 @@ async function scrapeNinjal(): Promise<ScrapedEvent[]> {
       const href = anchor.attr('href') || '';
       const url = href.startsWith('http') ? href : href ? `${BASE}${href}` : null;
 
-      // 「日時：」から開催日を抽出
       const jijiMatch = fullText.match(/日時[：:]\s*(\d{4}年\s*\d{1,2}月\s*\d{1,2}日)/);
       const eventDate = jijiMatch ? parseDate(jijiMatch[1]) : null;
 
-      // 「会場：」から会場を抽出
       const venueMatch = fullText.match(/会場[：:]\s*([^\n\r　。、]{2,40})/);
       const venue = venueMatch ? venueMatch[1].trim() : null;
 
@@ -403,9 +355,6 @@ async function scrapeNinjal(): Promise<ScrapedEvent[]> {
   return events;
 }
 
-// -----------------------------------------------------------------------
-// メインエクスポート
-// -----------------------------------------------------------------------
 const SCRAPERS: { name: string; fn: () => Promise<ScrapedEvent[]> }[] = [
   { name: '日本語教育学会', fn: scrapeNkg },
   { name: '9640.jp', fn: scrape9640 },
@@ -423,12 +372,11 @@ export async function fetchAllEvents(): Promise<void> {
       console.log(`[Events] Scraping: ${name}`);
       const scraped = await fn();
 
-      // 6か月以内のイベントのみ保存
       const relevant = scraped.filter((e) => isWithin6Months(e.event_date));
       let count = 0;
       for (const event of relevant) {
         try {
-          upsertEvent(event);
+          await upsertEvent(event);
           count++;
         } catch (err) {
           console.error(`[Events] Failed to upsert: ${event.title}`, err);

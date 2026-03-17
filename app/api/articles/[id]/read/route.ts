@@ -14,7 +14,7 @@ export async function POST(
       return NextResponse.json({ error: '無効なIDです' }, { status: 400 });
     }
 
-    markArticleAsRead(id);
+    await markArticleAsRead(id);
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error('[API /articles/[id]/read] Error:', err);

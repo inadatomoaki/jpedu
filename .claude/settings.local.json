@@ -45,7 +45,18 @@
       "WebFetch(domain:www.bonjinsha.com)",
       "WebFetch(domain:www.jactfl.or.jp)",
       "WebFetch(domain:www.ninjal.ac.jp)",
-      "WebFetch(domain:calendar.google.com)"
+      "WebFetch(domain:calendar.google.com)",
+      "Bash(curl -sSfL https://get.tur.so/install.sh)",
+      "Bash(bash)",
+      "Bash(source /Users/inadatomoaki/.zshrc)",
+      "Bash(turso auth:*)",
+      "Bash(turso db:*)",
+      "Bash(sed -i '' 's/markArticleAsRead\\(id\\);/await markArticleAsRead\\(id\\);/' /Users/inadatomoaki/Claude/jpedu/app/api/articles/[id]/read/route.ts)",
+      "Bash(sed -i '' 's/const is_favorite = toggleFavorite\\(id\\);/const is_favorite = await toggleFavorite\\(id\\);/' /Users/inadatomoaki/Claude/jpedu/app/api/articles/[id]/favorite/route.ts)",
+      "Bash(READ_ROUTE=\"/Users/inadatomoaki/Claude/jpedu/app/api/articles/[id]/read/route.ts\")",
+      "Bash(FAV_ROUTE=\"/Users/inadatomoaki/Claude/jpedu/app/api/articles/[id]/favorite/route.ts\")",
+      "Bash(sed -i '' 's/markArticleAsRead\\(id\\);/await markArticleAsRead\\(id\\);/' \"$READ_ROUTE\")",
+      "Bash(sed -i '' 's/const is_favorite = toggleFavorite\\(id\\);/const is_favorite = await toggleFavorite\\(id\\);/' \"$FAV_ROUTE\")"
     ]
   }
 }

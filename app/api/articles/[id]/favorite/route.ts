@@ -14,7 +14,7 @@ export async function POST(
       return NextResponse.json({ error: '無効なIDです' }, { status: 400 });
     }
 
-    const is_favorite = toggleFavorite(id);
+    const is_favorite = await toggleFavorite(id);
     return NextResponse.json({ success: true, is_favorite });
   } catch (err) {
     console.error('[API /articles/[id]/favorite] Error:', err);

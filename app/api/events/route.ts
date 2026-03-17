@@ -11,8 +11,10 @@ export async function GET(req: NextRequest) {
 
     const upcoming = upcomingParam !== 'false';
 
-    const events = getEvents({ upcoming, organizer });
-    const organizers = getEventOrganizers();
+    const [events, organizers] = await Promise.all([
+      getEvents({ upcoming, organizer }),
+      getEventOrganizers(),
+    ]);
 
     return NextResponse.json({ events, organizers });
   } catch (err) {

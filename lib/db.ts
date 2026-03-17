@@ -1,120 +1,106 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+import { createClient, Client, Row } from '@libsql/client';
 
-const DB_PATH = path.join(process.cwd(), 'data', 'jpedu.db');
+let _client: Client | null = null;
+let _initialized = false;
 
-let _db: Database.Database | null = null;
-
-export function getDb(): Database.Database {
-  if (_db) return _db;
-
-  // Ensure data directory exists
-  const dataDir = path.dirname(DB_PATH);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-
-  _db = new Database(DB_PATH);
-  _db.pragma('journal_mode = WAL');
-  initializeSchema(_db);
-  seedRssSources(_db);
-
-  return _db;
+function getClient(): Client {
+  if (_client) return _client;
+  const url = process.env.TURSO_DATABASE_URL;
+  if (!url) throw new Error('TURSO_DATABASE_URL is not set');
+  _client = createClient({
+    url,
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  });
+  return _client;
 }
 
-function initializeSchema(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS articles (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      guid TEXT UNIQUE,
-      title TEXT,
-      link TEXT,
-      summary TEXT,
-      source_name TEXT,
-      published_at TEXT,
-      category TEXT,
-      is_read INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
+async function ensureInitialized(): Promise<Client> {
+  const client = getClient();
+  if (_initialized) return client;
 
-    CREATE TABLE IF NOT EXISTS rss_sources (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
-      url TEXT UNIQUE,
-      last_fetched_at TEXT
-    );
+  await client.batch(
+    [
+      {
+        sql: `CREATE TABLE IF NOT EXISTS articles (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          guid TEXT UNIQUE,
+          title TEXT,
+          link TEXT,
+          summary TEXT,
+          source_name TEXT,
+          published_at TEXT,
+          category TEXT,
+          is_read INTEGER DEFAULT 0,
+          is_favorite INTEGER DEFAULT 0,
+          image_url TEXT,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )`,
+        args: [],
+      },
+      {
+        sql: `CREATE TABLE IF NOT EXISTS rss_sources (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT,
+          url TEXT UNIQUE,
+          last_fetched_at TEXT
+        )`,
+        args: [],
+      },
+      {
+        sql: `CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category)`,
+        args: [],
+      },
+      {
+        sql: `CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at)`,
+        args: [],
+      },
+      {
+        sql: `CREATE INDEX IF NOT EXISTS idx_articles_is_read ON articles(is_read)`,
+        args: [],
+      },
+      {
+        sql: `CREATE UNIQUE INDEX IF NOT EXISTS idx_rss_sources_url ON rss_sources(url)`,
+        args: [],
+      },
+      {
+        sql: `CREATE TABLE IF NOT EXISTS events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          guid TEXT UNIQUE,
+          title TEXT NOT NULL,
+          organizer TEXT,
+          event_type TEXT DEFAULT 'その他',
+          event_date TEXT,
+          event_date_end TEXT,
+          deadline TEXT,
+          venue TEXT,
+          url TEXT,
+          description TEXT,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )`,
+        args: [],
+      },
+      {
+        sql: `CREATE INDEX IF NOT EXISTS idx_events_event_date ON events(event_date)`,
+        args: [],
+      },
+      {
+        sql: `CREATE INDEX IF NOT EXISTS idx_events_organizer ON events(organizer)`,
+        args: [],
+      },
+    ],
+    'write'
+  );
 
-    CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category);
-    CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at);
-    CREATE INDEX IF NOT EXISTS idx_articles_is_read ON articles(is_read);
-  `);
-
-  // 既存DBにurl UNIQUE制約がない場合のマイグレーション
-  try {
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rss_sources_url ON rss_sources(url)`);
-  } catch {
-    // すでに制約がある場合は無視
-  }
-
-  // is_favorite カラムのマイグレーション
-  try {
-    db.exec(`ALTER TABLE articles ADD COLUMN is_favorite INTEGER DEFAULT 0`);
-  } catch {
-    // すでにカラムがある場合は無視
-  }
-
-  // image_url カラムのマイグレーション
-  try {
-    db.exec(`ALTER TABLE articles ADD COLUMN image_url TEXT`);
-  } catch {
-    // すでにカラムがある場合は無視
-  }
-
-  // events テーブル
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      guid TEXT UNIQUE,
-      title TEXT NOT NULL,
-      organizer TEXT,
-      event_type TEXT DEFAULT 'その他',
-      event_date TEXT,
-      event_date_end TEXT,
-      deadline TEXT,
-      venue TEXT,
-      url TEXT,
-      description TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_events_event_date ON events(event_date);
-    CREATE INDEX IF NOT EXISTS idx_events_organizer ON events(organizer);
-  `);
+  await seedRssSources(client);
+  _initialized = true;
+  return client;
 }
 
-function seedRssSources(db: Database.Database): void {
-  const upsert = db.prepare(`
-    INSERT INTO rss_sources (name, url, last_fetched_at)
-    VALUES (?, ?, NULL)
-    ON CONFLICT(url) DO NOTHING
-  `);
-
+async function seedRssSources(client: Client): Promise<void> {
   const sources = [
-    {
-      name: '文部科学省',
-      url: 'https://www.mext.go.jp/b_menu/news/index.rdf',
-    },
-    {
-      // スクレイピング対象（URLはダミー、scraper.tsで取得）
-      name: '文化庁',
-      url: 'https://www.bunka.go.jp/koho_hodo_oshirase/hodohappyo/',
-    },
-    {
-      // スクレイピング対象（URLはダミー、scraper.tsで取得）
-      name: '国際交流基金',
-      url: 'https://www.jpf.go.jp/j/about/press/',
-    },
-    // Google ニュース キーワード検索RSS（日本語キーワードはURLエンコード済み）
+    { name: '文部科学省', url: 'https://www.mext.go.jp/b_menu/news/index.rdf' },
+    { name: '文化庁', url: 'https://www.bunka.go.jp/koho_hodo_oshirase/hodohappyo/' },
+    { name: '国際交流基金', url: 'https://www.jpf.go.jp/j/about/press/' },
     {
       name: 'Googleニュース: 日本語教育',
       url: 'https://news.google.com/rss/search?q=%E6%97%A5%E6%9C%AC%E8%AA%9E%E6%95%99%E8%82%B2&hl=ja&gl=JP&ceid=JP:ja',
@@ -142,8 +128,56 @@ function seedRssSources(db: Database.Database): void {
   ];
 
   for (const source of sources) {
-    upsert.run(source.name, source.url);
+    await client.execute({
+      sql: `INSERT INTO rss_sources (name, url, last_fetched_at)
+            VALUES (?, ?, NULL)
+            ON CONFLICT(url) DO NOTHING`,
+      args: [source.name, source.url],
+    });
   }
+}
+
+function rowToArticle(row: Row): Article {
+  return {
+    id: row.id as number,
+    guid: row.guid as string,
+    title: row.title as string,
+    link: row.link as string,
+    summary: row.summary as string,
+    source_name: row.source_name as string,
+    published_at: row.published_at as string,
+    category: row.category as string,
+    is_read: row.is_read as number,
+    is_favorite: row.is_favorite as number,
+    image_url: row.image_url as string | null,
+    created_at: row.created_at as string,
+  };
+}
+
+function rowToRssSource(row: Row): RssSource {
+  return {
+    id: row.id as number,
+    name: row.name as string,
+    url: row.url as string,
+    last_fetched_at: row.last_fetched_at as string | null,
+  };
+}
+
+function rowToEvent(row: Row): Event {
+  return {
+    id: row.id as number,
+    guid: row.guid as string,
+    title: row.title as string,
+    organizer: row.organizer as string | null,
+    event_type: row.event_type as string,
+    event_date: row.event_date as string | null,
+    event_date_end: row.event_date_end as string | null,
+    deadline: row.deadline as string | null,
+    venue: row.venue as string | null,
+    url: row.url as string | null,
+    description: row.description as string | null,
+    created_at: row.created_at as string,
+  };
 }
 
 export interface Article {
@@ -168,13 +202,13 @@ export interface RssSource {
   last_fetched_at: string | null;
 }
 
-export function getArticles(options: {
+export async function getArticles(options: {
   category?: string;
   favorite?: boolean;
   page?: number;
   limit?: number;
-}): { articles: Article[]; total: number; lastUpdated: string | null } {
-  const db = getDb();
+}): Promise<{ articles: Article[]; total: number; lastUpdated: string | null }> {
+  const client = await ensureInitialized();
   const { category, favorite, page = 1, limit = 50 } = options;
   const offset = (page - 1) * limit;
 
@@ -191,68 +225,109 @@ export function getArticles(options: {
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const total = (
-    db.prepare(`SELECT COUNT(*) as c FROM articles ${whereClause}`).get(...params) as { c: number }
-  ).c;
+  const countResult = await client.execute({
+    sql: `SELECT COUNT(*) as c FROM articles ${whereClause}`,
+    args: params,
+  });
+  const total = countResult.rows[0].c as number;
 
-  const articles = db
-    .prepare(
-      `SELECT * FROM articles ${whereClause}
-       ORDER BY published_at DESC, created_at DESC
-       LIMIT ? OFFSET ?`
-    )
-    .all(...params, limit, offset) as Article[];
+  const articlesResult = await client.execute({
+    sql: `SELECT * FROM articles ${whereClause}
+          ORDER BY published_at DESC, created_at DESC
+          LIMIT ? OFFSET ?`,
+    args: [...params, limit, offset],
+  });
 
-  const lastUpdatedRow = db
-    .prepare('SELECT MAX(last_fetched_at) as lu FROM rss_sources')
-    .get() as { lu: string | null };
+  const lastUpdatedResult = await client.execute({
+    sql: 'SELECT MAX(last_fetched_at) as lu FROM rss_sources',
+    args: [],
+  });
 
   return {
-    articles,
+    articles: articlesResult.rows.map(rowToArticle),
     total,
-    lastUpdated: lastUpdatedRow?.lu ?? null,
+    lastUpdated: (lastUpdatedResult.rows[0]?.lu as string | null) ?? null,
   };
 }
 
-export function markArticleAsRead(id: number): void {
-  const db = getDb();
-  db.prepare('UPDATE articles SET is_read = 1 WHERE id = ?').run(id);
+export async function markArticleAsRead(id: number): Promise<void> {
+  const client = await ensureInitialized();
+  await client.execute({
+    sql: 'UPDATE articles SET is_read = 1 WHERE id = ?',
+    args: [id],
+  });
 }
 
-export function toggleFavorite(id: number): number {
-  const db = getDb();
-  db.prepare('UPDATE articles SET is_favorite = CASE WHEN is_favorite = 1 THEN 0 ELSE 1 END WHERE id = ?').run(id);
-  const row = db.prepare('SELECT is_favorite FROM articles WHERE id = ?').get(id) as { is_favorite: number };
-  return row.is_favorite;
+export async function toggleFavorite(id: number): Promise<number> {
+  const client = await ensureInitialized();
+  await client.execute({
+    sql: 'UPDATE articles SET is_favorite = CASE WHEN is_favorite = 1 THEN 0 ELSE 1 END WHERE id = ?',
+    args: [id],
+  });
+  const result = await client.execute({
+    sql: 'SELECT is_favorite FROM articles WHERE id = ?',
+    args: [id],
+  });
+  return result.rows[0].is_favorite as number;
 }
 
-export function upsertArticle(article: Omit<Article, 'id' | 'created_at' | 'is_read' | 'is_favorite'>): void {
-  const db = getDb();
-  db.prepare(`
-    INSERT INTO articles (guid, title, link, summary, source_name, published_at, category, image_url)
-    VALUES (@guid, @title, @link, @summary, @source_name, @published_at, @category, @image_url)
-    ON CONFLICT(guid) DO UPDATE SET
-      title = excluded.title,
-      link = excluded.link,
-      summary = excluded.summary,
-      source_name = excluded.source_name,
-      published_at = excluded.published_at,
-      category = excluded.category,
-      image_url = COALESCE(excluded.image_url, articles.image_url)
-  `).run(article);
+export async function upsertArticle(
+  article: Omit<Article, 'id' | 'created_at' | 'is_read' | 'is_favorite'>
+): Promise<void> {
+  const client = await ensureInitialized();
+  await client.execute({
+    sql: `INSERT INTO articles (guid, title, link, summary, source_name, published_at, category, image_url)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(guid) DO UPDATE SET
+            title = excluded.title,
+            link = excluded.link,
+            summary = excluded.summary,
+            source_name = excluded.source_name,
+            published_at = excluded.published_at,
+            category = excluded.category,
+            image_url = COALESCE(excluded.image_url, articles.image_url)`,
+    args: [
+      article.guid,
+      article.title,
+      article.link,
+      article.summary,
+      article.source_name,
+      article.published_at,
+      article.category,
+      article.image_url ?? null,
+    ],
+  });
 }
 
-export function updateSourceFetchedAt(id: number): void {
-  const db = getDb();
-  db.prepare('UPDATE rss_sources SET last_fetched_at = ? WHERE id = ?').run(
-    new Date().toISOString(),
-    id
-  );
+export async function updateSourceFetchedAt(id: number): Promise<void> {
+  const client = await ensureInitialized();
+  await client.execute({
+    sql: 'UPDATE rss_sources SET last_fetched_at = ? WHERE id = ?',
+    args: [new Date().toISOString(), id],
+  });
 }
 
-export function getRssSources(): RssSource[] {
-  const db = getDb();
-  return db.prepare('SELECT * FROM rss_sources').all() as RssSource[];
+export async function getRssSources(): Promise<RssSource[]> {
+  const client = await ensureInitialized();
+  const result = await client.execute({ sql: 'SELECT * FROM rss_sources', args: [] });
+  return result.rows.map(rowToRssSource);
+}
+
+export async function updateArticleImageUrl(id: number, imageUrl: string): Promise<void> {
+  const client = await ensureInitialized();
+  await client.execute({
+    sql: 'UPDATE articles SET image_url = ? WHERE id = ?',
+    args: [imageUrl, id],
+  });
+}
+
+export async function getArticlesWithoutImages(limit: number): Promise<{ id: number; link: string }[]> {
+  const client = await ensureInitialized();
+  const result = await client.execute({
+    sql: 'SELECT id, link FROM articles WHERE image_url IS NULL ORDER BY published_at DESC LIMIT ?',
+    args: [limit],
+  });
+  return result.rows.map((r) => ({ id: r.id as number, link: r.link as string }));
 }
 
 export interface Event {
@@ -270,37 +345,49 @@ export interface Event {
   created_at: string;
 }
 
-export function upsertEvent(event: Omit<Event, 'id' | 'created_at'>): void {
-  const db = getDb();
-  db.prepare(`
-    INSERT INTO events (guid, title, organizer, event_type, event_date, event_date_end, deadline, venue, url, description)
-    VALUES (@guid, @title, @organizer, @event_type, @event_date, @event_date_end, @deadline, @venue, @url, @description)
-    ON CONFLICT(guid) DO UPDATE SET
-      title = excluded.title,
-      organizer = excluded.organizer,
-      event_type = excluded.event_type,
-      event_date = excluded.event_date,
-      event_date_end = excluded.event_date_end,
-      deadline = excluded.deadline,
-      venue = excluded.venue,
-      url = excluded.url,
-      description = excluded.description
-  `).run(event);
+export async function upsertEvent(event: Omit<Event, 'id' | 'created_at'>): Promise<void> {
+  const client = await ensureInitialized();
+  await client.execute({
+    sql: `INSERT INTO events (guid, title, organizer, event_type, event_date, event_date_end, deadline, venue, url, description)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(guid) DO UPDATE SET
+            title = excluded.title,
+            organizer = excluded.organizer,
+            event_type = excluded.event_type,
+            event_date = excluded.event_date,
+            event_date_end = excluded.event_date_end,
+            deadline = excluded.deadline,
+            venue = excluded.venue,
+            url = excluded.url,
+            description = excluded.description`,
+    args: [
+      event.guid,
+      event.title,
+      event.organizer ?? null,
+      event.event_type,
+      event.event_date ?? null,
+      event.event_date_end ?? null,
+      event.deadline ?? null,
+      event.venue ?? null,
+      event.url ?? null,
+      event.description ?? null,
+    ],
+  });
 }
 
-export function getEvents(options: {
-  upcoming?: boolean;
-  organizer?: string;
-} = {}): Event[] {
-  const db = getDb();
+export async function getEvents(
+  options: { upcoming?: boolean; organizer?: string } = {}
+): Promise<Event[]> {
+  const client = await ensureInitialized();
   const { upcoming = true, organizer } = options;
   const conditions: string[] = [];
   const params: (string | number)[] = [];
 
   if (upcoming) {
-    // event_date が今日以降、またはevent_dateがnullのもの（締切等）
     const today = new Date().toISOString().slice(0, 10);
-    conditions.push(`(event_date IS NULL OR event_date >= ? OR (event_date_end IS NOT NULL AND event_date_end >= ?))`);
+    conditions.push(
+      `(event_date IS NULL OR event_date >= ? OR (event_date_end IS NOT NULL AND event_date_end >= ?))`
+    );
     params.push(today, today);
   }
   if (organizer) {
@@ -309,13 +396,18 @@ export function getEvents(options: {
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  return db
-    .prepare(`SELECT * FROM events ${whereClause} ORDER BY event_date ASC, created_at DESC`)
-    .all(...params) as Event[];
+  const result = await client.execute({
+    sql: `SELECT * FROM events ${whereClause} ORDER BY event_date ASC, created_at DESC`,
+    args: params,
+  });
+  return result.rows.map(rowToEvent);
 }
 
-export function getEventOrganizers(): string[] {
-  const db = getDb();
-  const rows = db.prepare('SELECT DISTINCT organizer FROM events WHERE organizer IS NOT NULL ORDER BY organizer').all() as { organizer: string }[];
-  return rows.map((r) => r.organizer);
+export async function getEventOrganizers(): Promise<string[]> {
+  const client = await ensureInitialized();
+  const result = await client.execute({
+    sql: 'SELECT DISTINCT organizer FROM events WHERE organizer IS NOT NULL ORDER BY organizer',
+    args: [],
+  });
+  return result.rows.map((r) => r.organizer as string);
 }

@@ -14,14 +14,12 @@ interface ScrapedArticle {
 }
 
 function parseJapaneseDate(dateStr: string, year?: number): string {
-  // Handle "2026年3月12日" format
   const fullMatch = dateStr.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
   if (fullMatch) {
     const [, y, m, d] = fullMatch;
     return new Date(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`).toISOString();
   }
 
-  // Handle "3月13日" format (month/day only)
   const shortMatch = dateStr.match(/(\d{1,2})月(\d{1,2})日/);
   if (shortMatch && year) {
     const [, m, d] = shortMatch;
@@ -31,10 +29,9 @@ function parseJapaneseDate(dateStr: string, year?: number): string {
   return new Date().toISOString();
 }
 
-// 日本の会計年度: 4月始まり
 function currentFiscalYear(): number {
   const now = new Date();
-  const month = now.getMonth() + 1; // 1-12
+  const month = now.getMonth() + 1;
   return month >= 4 ? now.getFullYear() : now.getFullYear() - 1;
 }
 
@@ -48,7 +45,6 @@ async function fetchHtml(url: string): Promise<string> {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   const buffer = await res.arrayBuffer();
-  // Most Japanese gov sites use UTF-8 or Shift-JIS; try UTF-8 first
   return new TextDecoder('utf-8').decode(buffer);
 }
 
@@ -100,17 +96,15 @@ async function scrapeJpf(): Promise<ScrapedArticle[]> {
     const td = $(row).find('td');
     if (ths.length < 2 || !td.length) return;
 
-    const dateText = ths.eq(1).text().trim(); // "3月13日"
+    const dateText = ths.eq(1).text().trim();
     const anchor = td.find('a');
     const title = anchor.text().trim();
     const href = anchor.attr('href');
 
     if (!title || !href) return;
 
-    // Determine calendar year from fiscal year and month
     const monthMatch = dateText.match(/(\d{1,2})月/);
     const month = monthMatch ? parseInt(monthMatch[1]) : 4;
-    // 4月〜12月 → 会計年度の開始年、1月〜3月 → 翌年
     const calYear = month >= 4 ? fiscalYear : fiscalYear + 1;
 
     const link = href.startsWith('http') ? href : `${BASE_URL}${href}`;
@@ -147,7 +141,7 @@ export async function fetchAllScrapedSources(): Promise<void> {
       for (const article of articles) {
         if (!isRelevantArticle(article.title, article.source_name)) continue;
         try {
-          upsertArticle(article);
+          await upsertArticle(article);
           count++;
         } catch (err) {
           console.error(`[Scraper] Failed to upsert: ${article.title}`, err);
@@ -155,10 +149,9 @@ export async function fetchAllScrapedSources(): Promise<void> {
       }
       console.log(`[Scraper] ${name}: ${count} articles processed`);
 
-      // Find matching source in DB and update last_fetched_at
-      const sources = getRssSources();
+      const sources = await getRssSources();
       const source = sources.find((s) => s.name === name);
-      if (source) updateSourceFetchedAt(source.id);
+      if (source) await updateSourceFetchedAt(source.id);
     } catch (err) {
       console.error(
         `[Scraper] Error scraping ${name}:`,
