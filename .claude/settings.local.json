@@ -58,7 +58,9 @@
       "Bash(sed -i '' 's/markArticleAsRead\\(id\\);/await markArticleAsRead\\(id\\);/' \"$READ_ROUTE\")",
       "Bash(sed -i '' 's/const is_favorite = toggleFavorite\\(id\\);/const is_favorite = await toggleFavorite\\(id\\);/' \"$FAV_ROUTE\")",
       "Bash(npx vercel:*)",
-      "Bash(npm uninstall:*)"
+      "Bash(npm uninstall:*)",
+      "Bash(curl -s \"https://jpedu-kappa.vercel.app/api/articles?page=1&limit=5\")",
+      "Bash(curl -s \"https://jpedu-kappa.vercel.app/api/events\")"
     ]
   }
 }
