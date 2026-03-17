@@ -1,23 +1,4 @@
 export async function register() {
-  // Only run on server side (Node.js runtime), skip on Vercel (serverless)
-  if (process.env.NEXT_RUNTIME === 'nodejs' && !process.env.VERCEL) {
-    const { fetchAllFeeds } = await import('./lib/rss');
-    const cron = await import('node-cron');
-
-    // Initial fetch on startup
-    console.log('[Instrumentation] Starting initial RSS fetch...');
-    fetchAllFeeds().catch((err) => {
-      console.error('[Instrumentation] Initial RSS fetch failed:', err);
-    });
-
-    // Schedule daily refresh at 6:00 AM
-    cron.schedule('0 6 * * *', () => {
-      console.log('[Cron] Running scheduled RSS fetch...');
-      fetchAllFeeds().catch((err) => {
-        console.error('[Cron] Scheduled RSS fetch failed:', err);
-      });
-    });
-
-    console.log('[Instrumentation] Cron job scheduled (daily at 6:00 AM)');
-  }
+  // Vercel の場合はスキップ（vercel.json の Cron Jobs で自動更新）
+  // ローカル開発では手動で「更新」ボタンを押してください
 }

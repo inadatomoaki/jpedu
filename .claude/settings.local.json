@@ -56,7 +56,9 @@
       "Bash(READ_ROUTE=\"/Users/inadatomoaki/Claude/jpedu/app/api/articles/[id]/read/route.ts\")",
       "Bash(FAV_ROUTE=\"/Users/inadatomoaki/Claude/jpedu/app/api/articles/[id]/favorite/route.ts\")",
       "Bash(sed -i '' 's/markArticleAsRead\\(id\\);/await markArticleAsRead\\(id\\);/' \"$READ_ROUTE\")",
-      "Bash(sed -i '' 's/const is_favorite = toggleFavorite\\(id\\);/const is_favorite = await toggleFavorite\\(id\\);/' \"$FAV_ROUTE\")"
+      "Bash(sed -i '' 's/const is_favorite = toggleFavorite\\(id\\);/const is_favorite = await toggleFavorite\\(id\\);/' \"$FAV_ROUTE\")",
+      "Bash(npx vercel:*)",
+      "Bash(npm uninstall:*)"
     ]
   }
 }
